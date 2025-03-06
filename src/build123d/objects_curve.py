@@ -580,11 +580,6 @@ class JernArc(BaseEdgeObject):
         radius (float): arc radius
         arc_size (float): arc size in degrees (negative to change direction)
         mode (Mode, optional): combination mode. Defaults to Mode.ADD.
-
-    Attributes:
-        start (Vector): start point
-        end_of_arc (Vector): end point of arc
-        center_point (Vector): center of arc
     """
 
     _applies_to = [BuildLine._tag]
@@ -601,7 +596,6 @@ class JernArc(BaseEdgeObject):
         validate_inputs(context, self)
 
         start = WorkplaneList.localize(start)
-        self.start = start
         if context is None:
             jern_workplane = Plane.XY
         else:
@@ -614,19 +608,19 @@ class JernArc(BaseEdgeObject):
         )
 
         arc_direction = copysign(1.0, arc_size)
-        self.center_point = start + start_tangent.rotate(
+        center_point = start + start_tangent.rotate(
             Axis(start, jern_workplane.z_dir), arc_direction * 90
         ) * abs(radius)
-        self.end_of_arc = self.center_point + (start - self.center_point).rotate(
+        end_of_arc = center_point + (start - center_point).rotate(
             Axis(start, jern_workplane.z_dir), arc_size
         )
         if abs(arc_size) >= 360:
             circle_plane = copy_module.copy(jern_workplane)
-            circle_plane.origin = self.center_point
-            circle_plane.x_dir = self.start - circle_plane.origin
+            circle_plane.origin = center_point
+            circle_plane.x_dir = start - circle_plane.origin
             arc = Edge.make_circle(radius, circle_plane)
         else:
-            arc = Edge.make_tangent_arc(start, start_tangent, self.end_of_arc)
+            arc = Edge.make_tangent_arc(start, start_tangent, end_of_arc)
 
         super().__init__(arc, mode=mode)
 

@@ -239,7 +239,7 @@ class BuildLineTests(unittest.TestCase):
         circle_face = Face(Wire([l1]))
         self.assertAlmostEqual(circle_face.area, pi, 5)
         self.assertTupleAlmostEquals(circle_face.center().to_tuple(), (0, 1, 0), 5)
-        self.assertTupleAlmostEquals(l1.vertex().to_tuple(), l2.start.to_tuple(), 5)
+        self.assertTupleAlmostEquals(l1.vertex().to_tuple(), (l2 @ 0).to_tuple(), 5)
 
         l1 = JernArc((0, 0), (1, 0), 1, 90)
         self.assertTupleAlmostEquals((l1 @ 1).to_tuple(), (1, 1, 0), 5)
