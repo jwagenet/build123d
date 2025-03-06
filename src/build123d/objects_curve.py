@@ -129,8 +129,8 @@ class CenterArc(BaseEdgeObject):
     Args:
         center (VectorLike): center point of arc
         radius (float): arc radius
-        start_angle (float): arc staring angle
-        arc_size (float): arc size
+        start_angle (float, optional): arc starting angle from x-axis. Defaults to 0.0
+        arc_size (float, optional): angular size of arc. Defaults to 90.0
         mode (Mode, optional): combination mode. Defaults to Mode.ADD.
     """
 
@@ -140,8 +140,8 @@ class CenterArc(BaseEdgeObject):
         self,
         center: VectorLike,
         radius: float,
-        start_angle: float,
-        arc_size: float,
+        start_angle: float = 0.0,
+        arc_size: float = 90.0,
         mode: Mode = Mode.ADD,
     ):
         context: BuildLine | None = BuildLine._get_context(self)
