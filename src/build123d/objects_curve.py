@@ -173,7 +173,7 @@ class CenterArc(BaseEdgeObject):
 
         super().__init__(arc, mode=mode)
 
-
+from ocp_vscode import show_object
 class DoubleTangentArc(BaseEdgeObject):
     """Line Object: Double Tangent Arc
 
@@ -210,67 +210,135 @@ class DoubleTangentArc(BaseEdgeObject):
 
         arc_pt = WorkplaneList.localize(pnt)
         arc_tangent = WorkplaneList.localize(tangent).normalized()
-        if WorkplaneList._get_context() is not None:
-            workplane = WorkplaneList._get_context().workplanes[0]
-        else:
+        # why isnt other localized?
+
+
+        # remove
+        # changed this to match other curve objects
+        # I dont really understand what its for!
+        # its important rotation axis is consistent
+        if context is None:
             workplane = Edge.make_line(arc_pt, arc_pt + arc_tangent).common_plane(
                 *other.edges()
             )
             if workplane is None:
                 raise ValueError("DoubleTangentArc only works on a single plane")
             workplane = -workplane  # Flip to help with TOP/BOTTOM
-        rotation_axis = Axis((0, 0, 0), workplane.z_dir)
+        else:
+            workplane = copy_module.copy(
+                WorkplaneList._get_context().workplanes[0]
+            )
+
+        # show_object([Edge.make_line(arc_pt, arc_pt + arc_tangent), workplane])
+
+        rotation_axis = Axis((0, 0, 0), -other.normal())
+
+        # Determine where arc_point is located
+        # ref forms a bisecting line parallel to arc tangent with same distance from other
+        # center as arc point in direction of arc tangent
+        normal = Vector(arc_tangent.Y, -arc_tangent.X)
+        ref_scale = (Vector(other.arc_center) - Vector(arc_pt)).dot(-Vector(arc_tangent))
+        ref = ref_scale * Vector(arc_tangent) + Vector(other.arc_center)
+        ref_to_point = (arc_pt - ref).dot(normal)
+
+        # if ref_to_point != 0:
+        #     show_object([Line(other.arc_center, ref), Line(ref, arc_pt)])
+
+        if ref_to_point == other.radius * 2:
+            RuntimeError("Point is already tangent to other.")
+
+        # Use magnitude and sign of ref to arc point along with keep to determine
+        #   which "side" angle the arc center will be on
+        # the arc center is the same side if the point is further from ref than other radius
+        # minimize type determines near or far side arc
+        keep_bool = keep == Keep.TOP
+        side_sign = 1 if ref_to_point < 0 else -1
+        type_bool = abs(ref_to_point) < other.radius
+
+        minimize_type = 1
+        if type_bool:
+            if keep == Keep.TOP:
+                angle = 90
+            else:
+                angle = -90
+        else:
+            angle = side_sign * 90
+            if keep == Keep.TOP:
+                minimize_type = side_sign * -minimize_type
+            else:
+                minimize_type = side_sign * minimize_type
+
+        if False:
+            print(pnt, tangent, arc_pt, arc_tangent, arc_pt + arc_tangent, other.normal())
+            print("length", ref_to_point, "radius", other.radius, "sign", side_sign, "type", type_bool)
+            print("keep", "top" if keep_bool else "bottom", "angle", angle, "type", "near" if minimize_type ==1 else "far")
+
         # Protect against massive circles that are effectively straight lines
         max_size = 10 * other.bounding_box().add(arc_pt).diagonal
 
         # Function to be minimized - note radius is a numpy array
-        def func(radius, perpendicular_bisector):
+        def func(radius, perpendicular_bisector, minimize_type):
             center = arc_pt + perpendicular_bisector * radius[0]
             separation = other.distance_to(center)
-            return abs(separation - radius)
+            # show_object(CenterArc(center, radius[0], 0, 360), position=(0,3,100), target=(0,3,0), up="Y")
+
+            if minimize_type == 1:
+                # near side arc
+                target = abs(separation - radius)
+            elif minimize_type == -1:
+                # far side arc
+                target = abs(separation - radius + other.radius * 2)
+
+            return target
 
         # Minimize the function using bounds and the tolerance value
+        if minimize_type == 1:
+            initialize = other.distance_to(arc_pt)
+        elif minimize_type == -1:
+            initialize = other.distance_to(arc_pt) + 2 * other.radius
+
         arc_centers = []
-        for angle in [90, -90]:
-            perpendicular_bisector = arc_tangent.rotate(rotation_axis, angle)
-            result = minimize(
-                func,
-                x0=0.0,
-                args=perpendicular_bisector,
-                method="Nelder-Mead",
-                bounds=[(0.0, max_size)],
-                tol=TOLERANCE,
-            )
-            arc_radius = result.x[0]
-            arc_center = arc_pt + perpendicular_bisector * arc_radius
+        # for angle in [90, -90]:
+        perpendicular_bisector = arc_tangent.rotate(rotation_axis, angle)
+        result = minimize(
+            func,
+            x0=0,
+            args=(perpendicular_bisector, minimize_type),
+            method="Nelder-Mead",
+            bounds=[(0.0, max_size)],
+            tol=TOLERANCE,
+        )
+        arc_radius = result.x[0]
+        arc_center = arc_pt + perpendicular_bisector * arc_radius
 
-            # Check for matching tangents
-            circle = Edge.make_circle(
-                arc_radius, Plane(arc_center, z_dir=rotation_axis.direction)
-            )
-            dist, p1, p2 = other.distance_to_with_closest_points(circle)
-            if dist > TOLERANCE:  # If they aren't touching
-                continue
-            other_axis = Axis(p1, other.tangent_at(p1))
-            circle_axis = Axis(p2, circle.tangent_at(p2))
-            if other_axis.is_parallel(circle_axis, 0.05):
-                arc_centers.append(arc_center)
+        # Check for matching tangents
+        circle = Edge.make_circle(
+            arc_radius, Plane(arc_center, z_dir=rotation_axis.direction)
+        )
+        # show_object(circle)
+        dist, p1, p2 = other.distance_to_with_closest_points(circle)
 
-        if len(arc_centers) == 0:
-            raise RuntimeError("No double tangent arcs found")
+        if dist > TOLERANCE:  # If they aren't touching
+            raise RuntimeError("No double tangent arc found")
 
-        # If there are multiple solutions, select the desired one
-        if keep == Keep.TOP:
-            arc_centers = arc_centers[0:1]
-        elif keep == Keep.BOTTOM:
-            arc_centers = arc_centers[-1:]
+        # whats this doing?
+        other_axis = Axis(p1, other.tangent_at(p1))
+        circle_axis = Axis(p2, circle.tangent_at(p2))
+        if not other_axis.is_parallel(circle_axis, 0.05):
+            raise RuntimeError("No double tangent arc found")
 
-        with BuildLine() as double:
-            for center in arc_centers:
-                _, p1, _ = other.distance_to_with_closest_points(center)
-                TangentArc(arc_pt, p1, tangent=arc_tangent)
+        # if len(arc_centers) == 0:
+        #     raise RuntimeError("No double tangent arc found")
 
-        super().__init__(double.wire(), mode=mode)
+        # # If there are multiple solutions, select the desired one
+        # if keep == Keep.TOP:
+        #     arc_centers = arc_centers[0:1]
+        # elif keep == Keep.BOTTOM:
+        #     arc_centers = arc_centers[-1:]
+
+        arc = TangentArc(arc_pt, p1, tangent=arc_tangent)
+
+        super().__init__(arc.edge(), mode=mode)
 
 
 class EllipticalStartArc(BaseEdgeObject):
