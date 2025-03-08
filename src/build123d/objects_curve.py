@@ -213,39 +213,35 @@ class DoubleTangentArc(BaseEdgeObject):
         # why isnt other localized?
 
 
-        # remove
+
         # changed this to match other curve objects
         # I dont really understand what its for!
-        # its important rotation axis is consistent
         if context is None:
             workplane = Edge.make_line(arc_pt, arc_pt + arc_tangent).common_plane(
                 *other.edges()
             )
             if workplane is None:
                 raise ValueError("DoubleTangentArc only works on a single plane")
-            workplane = -workplane  # Flip to help with TOP/BOTTOM
         else:
             workplane = copy_module.copy(
                 WorkplaneList._get_context().workplanes[0]
             )
 
-        # show_object([Edge.make_line(arc_pt, arc_pt + arc_tangent), workplane])
+        # show_object([arc_pt, arc_tangent, workplane, ])
 
-        rotation_axis = Axis((0, 0, 0), -other.normal())
-
-        # Determine where arc_point is located
+        # Determine where arc_point is located relative to other
         # ref forms a bisecting line parallel to arc tangent with same distance from other
         # center as arc point in direction of arc tangent
         normal = Vector(arc_tangent.Y, -arc_tangent.X)
-        ref_scale = (Vector(other.arc_center) - Vector(arc_pt)).dot(-Vector(arc_tangent))
-        ref = ref_scale * Vector(arc_tangent) + Vector(other.arc_center)
+        ref_scale = (other.arc_center - arc_pt).dot(-arc_tangent)
+        ref = ref_scale * arc_tangent + other.arc_center
         ref_to_point = (arc_pt - ref).dot(normal)
 
         # if ref_to_point != 0:
         #     show_object([Line(other.arc_center, ref), Line(ref, arc_pt)])
 
         if ref_to_point == other.radius * 2:
-            RuntimeError("Point is already tangent to other.")
+            RuntimeError("Point is already linear tangent to other.")
 
         # Use magnitude and sign of ref to arc point along with keep to determine
         #   which "side" angle the arc center will be on
@@ -258,9 +254,9 @@ class DoubleTangentArc(BaseEdgeObject):
         minimize_type = 1
         if type_bool:
             if keep == Keep.TOP:
-                angle = 90
-            else:
                 angle = -90
+            else:
+                angle = 90
         else:
             angle = side_sign * 90
             if keep == Keep.TOP:
@@ -291,14 +287,14 @@ class DoubleTangentArc(BaseEdgeObject):
 
             return target
 
-        # Minimize the function using bounds and the tolerance value
+        # Initial condition to speed up search
         if minimize_type == 1:
             initialize = other.distance_to(arc_pt)
         elif minimize_type == -1:
             initialize = other.distance_to(arc_pt) + 2 * other.radius
 
-        arc_centers = []
-        # for angle in [90, -90]:
+        # Find arc center by minimizing func result
+        rotation_axis = Axis((0, 0, 0), -other.normal())
         perpendicular_bisector = arc_tangent.rotate(rotation_axis, angle)
         result = minimize(
             func,
@@ -311,33 +307,23 @@ class DoubleTangentArc(BaseEdgeObject):
         arc_radius = result.x[0]
         arc_center = arc_pt + perpendicular_bisector * arc_radius
 
-        # Check for matching tangents
-        circle = Edge.make_circle(
-            arc_radius, Plane(arc_center, z_dir=rotation_axis.direction)
-        )
-        # show_object(circle)
-        dist, p1, p2 = other.distance_to_with_closest_points(circle)
+        # dir needs to be flipped for far arc
+        tangent_normal = (other.arc_center - arc_center).normalized()
+        tangent_dir = minimize_type * Vector(tangent_normal.Y, -tangent_normal.X)
+        tangent_point = arc_radius * tangent_normal + arc_center
 
-        if dist > TOLERANCE:  # If they aren't touching
-            raise RuntimeError("No double tangent arc found")
+        # Confirm tangent point is on other
+        if abs(other.radius - (tangent_point - other.arc_center).length) > TOLERANCE:
+            print("arc", arc_radius, "max", max_size)
+            print((tangent_point - other.arc_center).length)
+            raise RuntimeError("No double tangent arc found, no tangent point found")
 
-        # whats this doing?
-        other_axis = Axis(p1, other.tangent_at(p1))
-        circle_axis = Axis(p2, circle.tangent_at(p2))
-        if not other_axis.is_parallel(circle_axis, 0.05):
-            raise RuntimeError("No double tangent arc found")
+        # Confirm tangent point is cotangent with point on other
+        other_dir = other.tangent_at(tangent_point)
+        if tangent_dir.get_angle(other_dir) > TOLERANCE:
+            raise RuntimeError("No double tangent arc found, found tangent out of tolerance")
 
-        # if len(arc_centers) == 0:
-        #     raise RuntimeError("No double tangent arc found")
-
-        # # If there are multiple solutions, select the desired one
-        # if keep == Keep.TOP:
-        #     arc_centers = arc_centers[0:1]
-        # elif keep == Keep.BOTTOM:
-        #     arc_centers = arc_centers[-1:]
-
-        arc = TangentArc(arc_pt, p1, tangent=arc_tangent)
-
+        arc = TangentArc(arc_pt, tangent_point, tangent=arc_tangent)
         super().__init__(arc.edge(), mode=mode)
 
 
