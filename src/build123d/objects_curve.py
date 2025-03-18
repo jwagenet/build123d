@@ -207,16 +207,21 @@ class DoubleTangentArc(BaseEdgeObject):
         context: BuildLine | None = BuildLine._get_context(self)
         validate_inputs(context, self)
 
+        if other.geom_type != GeomType.CIRCLE:
+            raise ValueError("Arc must have GeomType.CIRCLE")
+
         arc_pt = WorkplaneList.localize(pnt)
         wp_tangent = WorkplaneList.localize(tangent).normalized()
 
         if context is None:
             # Making the plane validates pnt, tangent, and other are coplanar
-            workplane = Edge.make_line(arc_pt, arc_pt + wp_tangent).common_plane(
+            coplane = Edge.make_line(arc_pt, arc_pt + wp_tangent).common_plane(
                 *other.edges()
             )
-            if workplane is None:
+            if coplane is None:
                 raise ValueError("DoubleTangentArc only works on a single plane")
+
+            workplane = Plane(coplane.origin, z_dir=other.normal())
         else:
             workplane = copy_module.copy(
                 WorkplaneList._get_context().workplanes[0]
@@ -247,10 +252,9 @@ class DoubleTangentArc(BaseEdgeObject):
         minimize_type = 1
         if abs(ref_to_point) < other.radius:
             # point/tangent pointing inside other, both arcs near
-            if keep == Keep.TOP:
-                angle = 90
-            else:
-                angle = -90
+            angle = keep_sign * -90
+            if ref_scale > 1:
+                angle = -angle
         else:
             # point/tangent pointing outside other, one near arc one far
             angle = side_sign * -90
@@ -260,12 +264,12 @@ class DoubleTangentArc(BaseEdgeObject):
                 minimize_type = side_sign * minimize_type
 
         # Protect against massive circles that are effectively straight lines
-        max_size = 10 * other.bounding_box().add(arc_pt).diagonal
+        max_size = 1000 * other.bounding_box().add(arc_pt).diagonal
 
         # Function to be minimized - note radius is a numpy array
         def func(radius, perpendicular_bisector, minimize_type):
             center = arc_pt + perpendicular_bisector * radius[0]
-            separation = other.distance_to(center)
+            separation = (other.arc_center - center).length - other.radius
 
             if minimize_type == 1:
                 # near side arc
@@ -294,25 +298,18 @@ class DoubleTangentArc(BaseEdgeObject):
         tangent_dir = minimize_type * tangent_normal.cross(workplane.z_dir)
         tangent_point = arc_radius * tangent_normal + arc_center
 
+        # Check if minimizer hit max size
+        if arc_radius == max_size:
+            raise RuntimeError("Arc radius very large. Can tangent line be used?")
+
         # Confirm tangent point is on other
         if abs(other.radius - (tangent_point - other.arc_center).length) > TOLERANCE:
-            # If we find the point on other where the tangent is parallel to arc tangent
-            # 1. form a line 1 following that tangent
-            # 2. form a line 2 from arc point to that point
-            # as the distance between the line 1 and arc_point goes to 0 and
-            # the angle between line 2 and arc tangent approaches 0 or 180
-            # the minimize will fail at max_size
-            #
-            # distance = ref_to_point + minimize_type * (angle / 90) * other.radius
-            # angle = (other.arc_center - side_sign * normal * other.radius - arc_pt).get_angle(arc_tangent)
-            #
-            # This should be the only way this error arises
-            raise RuntimeError("No double tangent arc found, no tangent point found")
+            raise RuntimeError("No tangent arc found, no tangent point found")
 
         # Confirm new tangent point is colinear with point tangent on other
         other_dir = other.tangent_at(tangent_point)
-        if tangent_dir.get_angle(other_dir) > TOLERANCE:
-            raise RuntimeError("No double tangent arc found, found tangent out of tolerance")
+        if tangent_dir.cross(other_dir).length > TOLERANCE:
+            raise RuntimeError("No tangent arc found, found tangent out of tolerance")
 
         arc = TangentArc(arc_pt, tangent_point, tangent=arc_tangent)
         super().__init__(arc.edge(), mode=mode)
