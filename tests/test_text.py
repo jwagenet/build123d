@@ -73,7 +73,11 @@ class TestFontManager(unittest.TestCase):
               )
         manager.manager.ClearFontDataBase()
         manager.register_system_fonts()
+        # add bundled fonts back in
+        manager.__init__()
         available_after = manager.available_fonts()
+        # register_system_fonts may add more fonts than InitFontDataBase() due to
+        # string naming rules
         self.assertGreaterEqual(len(available_after), len(available_before))
 
     def test_check_font(self):
